@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebKit Navigation API – key stability bug repro</title>
+<title>WebKit Navigation API – key stability bug repro (pushState)</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -13,8 +13,12 @@
   h1 { font-size: 1.15rem; margin-bottom: 2px; }
   .subtitle { font-size: 0.8rem; color: #666; margin-bottom: 14px; }
   .subtitle a { color: #0066cc; }
-
-  /* Steps guide */
+  .mode-badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 600;
+    padding: 3px 8px; border-radius: 4px; margin-bottom: 10px;
+    background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;
+  }
+  .mode-badge code { font-size: 0.72rem; background: #fce4c0; padding: 1px 4px; border-radius: 2px; }
   .steps {
     font-size: 0.82rem; color: #444; line-height: 1.6;
     margin-bottom: 14px; padding: 10px 14px;
@@ -22,8 +26,6 @@
   }
   .steps ol { padding-left: 1.4em; }
   .steps b { color: #222; }
-
-  /* Current page display */
   .current-page {
     font-size: 1.3rem; font-weight: 700; margin: 10px 0;
     padding: 12px 16px; background: #f0f4ff; border-radius: 8px;
@@ -33,8 +35,6 @@
     font-size: 0.75rem; font-weight: 500; color: #555;
     background: #e0e6f0; padding: 3px 8px; border-radius: 4px;
   }
-
-  /* Nav buttons */
   nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   nav button {
     padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px;
@@ -44,30 +44,25 @@
   nav button:active { background: #e8e8e8; }
   nav button.active { background: #0066cc; color: #fff; border-color: #0066cc; }
   nav button.back-btn { margin-left: auto; }
-
-  /* Result banner */
   #result-banner {
     padding: 10px 14px; border-radius: 6px; font-weight: 600;
     font-size: 0.88rem; margin: 10px 0; display: none;
   }
   #result-banner.pass { display: block; background: #e6f9e6; color: #1a7a1a; border: 1px solid #b0e0b0; }
   #result-banner.fail { display: block; background: #fde8e8; color: #c0392b; border: 1px solid #f0b0b0; }
-
-  /* Key tracker table */
   .key-tracker { margin: 10px 0; }
-  .key-tracker table {
-    width: 100%; border-collapse: collapse; font-size: 0.8rem;
-  }
+  .key-tracker table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
   .key-tracker th {
     text-align: left; font-size: 0.72rem; text-transform: uppercase;
     letter-spacing: 0.05em; color: #888; padding: 4px 8px;
     border-bottom: 1px solid #ddd;
   }
-  .key-tracker td { padding: 5px 8px; border-bottom: 1px solid #eee; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem; }
+  .key-tracker td {
+    padding: 5px 8px; border-bottom: 1px solid #eee;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem;
+  }
   .key-tracker .match { color: #1a7a1a; }
   .key-tracker .mismatch { color: #c0392b; font-weight: bold; }
-
-  /* Log panel */
   .log-header { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
   .section-title { font-weight: 600; font-size: 0.82rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
   .clear-btn { padding: 4px 10px; font-size: 0.72rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
@@ -77,15 +72,10 @@
     padding: 12px; border-radius: 8px; margin-top: 6px;
     max-height: 380px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
   }
-  .log-nav { color: #569cd6; }
-  .log-key { color: #ce9178; }
-  .log-ok { color: #6a9955; }
-  .log-fail { color: #f44747; font-weight: bold; }
-  .log-sep { color: #666; }
-  .log-entries { color: #9cdcfe; }
-  .log-dim { color: #888; }
-
-  /* Environment info */
+  .log-nav { color: #569cd6; } .log-key { color: #ce9178; }
+  .log-ok { color: #6a9955; } .log-fail { color: #f44747; font-weight: bold; }
+  .log-sep { color: #666; } .log-entries { color: #9cdcfe; }
+  .log-dim { color: #888; } .log-method { color: #dcdcaa; }
   .env-info {
     margin-top: 16px; font-size: 0.72rem; color: #999; line-height: 1.5;
     border-top: 1px solid #eee; padding-top: 10px;
@@ -95,10 +85,12 @@
 <body>
 
 <h1>Navigation API – <code>key</code> stability bug repro</h1>
-<p class="subtitle">
-  WebKit Bugzilla – minimal SPA repro &nbsp;|&nbsp;
-  <a href="https://github.com/nicobrinkkemper/webkit-navigation-key-bug" target="_blank">Source</a>
-</p>
+<p class="subtitle">WebKit Bugzilla – minimal SPA repro</p>
+
+<div class="mode-badge">
+  Step 1: <code>history.pushState()</code> + <code>history.back()</code> for navigation,
+  <code>currententrychange</code> for observation
+</div>
 
 <div class="steps">
   <strong>Steps to reproduce:</strong>
@@ -109,9 +101,6 @@
     <li>Click <b>Page C</b></li>
     <li>Press <b>← Back</b> → returns to Page A → <b>key must still match step 1</b></li>
   </ol>
-  <div style="margin-top:6px; font-size:0.78rem; color:#888;">
-    Use the ← Back button below, or the iOS Safari swipe-back gesture / browser back button.
-  </div>
 </div>
 
 <nav id="nav-buttons">
@@ -119,7 +108,7 @@
   <button data-path="/page-b">Page B</button>
   <button data-path="/page-c">Page C</button>
   <button data-path="/page-d">Page D</button>
-  <button class="back-btn" id="back-btn" disabled>← Back</button>
+  <button class="back-btn" id="back-btn">← Back</button>
 </nav>
 
 <div class="current-page">
@@ -129,7 +118,6 @@
 
 <div id="result-banner"></div>
 
-<!-- Key tracker for Page A -->
 <div class="key-tracker" id="key-tracker" style="display:none;">
   <table>
     <thead><tr><th>Step</th><th>Action</th><th>Page A key</th><th>Match?</th></tr></thead>
@@ -142,27 +130,19 @@
   <button class="clear-btn" onclick="resetAll()">Reset</button>
 </div>
 <div id="log"></div>
-
 <div class="env-info" id="env-info"></div>
 
 <script>
 // ══════════════════════════════════════════════════════════
-// Configuration
+// Base path detection for GitHub Pages
 // ══════════════════════════════════════════════════════════
-
-// Base path: detects GitHub Pages subdirectory automatically.
-// e.g. https://user.github.io/repo-name/ → basePath = "/repo-name"
 const basePath = (() => {
-  const meta = document.querySelector('meta[name="base-path"]');
-  if (meta) return meta.content;
-  // Heuristic: if the initial path contains a known page suffix, strip it
   const p = location.pathname;
   const knownPages = ['/page-a', '/page-b', '/page-c', '/page-d'];
   for (const pg of knownPages) {
     const idx = p.indexOf(pg);
     if (idx !== -1) return p.slice(0, idx);
   }
-  // Otherwise assume everything is the base (e.g. /repo-name/)
   return p.replace(/\/+$/, '');
 })();
 
@@ -170,11 +150,14 @@ const basePath = (() => {
 // State
 // ══════════════════════════════════════════════════════════
 let firstPageAKey = null;
-let pageAVisits = [];     // { step, key, navigationType }
+let pageAVisits = [];
 let stepCount = 0;
 let bugDetected = false;
 
-// DOM refs
+// What method was used for the current navigation
+// (set before pushState/back, read in currententrychange)
+let lastNavMethod = '(init)';
+
 const logEl       = document.getElementById('log');
 const pageEl      = document.getElementById('current-page');
 const stepBadge   = document.getElementById('step-badge');
@@ -192,145 +175,141 @@ function log(html) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function pageName(url) {
+function toPageName(url) {
   try {
-    const p = new URL(url).pathname;
+    const p = new URL(url, location.origin).pathname;
     if (p.endsWith('/page-a')) return 'Page A';
     if (p.endsWith('/page-b')) return 'Page B';
     if (p.endsWith('/page-c')) return 'Page C';
     if (p.endsWith('/page-d')) return 'Page D';
     return p;
-  } catch { return url; }
+  } catch { return String(url); }
 }
 
 function shortKey(key) {
   return key ? key.slice(0, 8) : '(none)';
 }
 
-function fullPath(page) {
-  return basePath + page;
-}
-
-function updateBackBtn() {
-  backBtn.disabled = !navigation.canGoBack;
-}
-
-function updateActiveBtn() {
-  const current = navigation.currentEntry?.url;
-  if (!current) return;
-  const path = new URL(current).pathname;
+function updateUI() {
+  pageEl.textContent = toPageName(location.pathname);
+  const path = location.pathname;
   document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
-    const match = path.endsWith(btn.dataset.path);
-    btn.classList.toggle('active', match);
+    btn.classList.toggle('active', path.endsWith(btn.dataset.path));
   });
 }
 
-function updateKeyTracker(step, action, key) {
-  trackerWrap.style.display = '';
-  const isMatch = key === firstPageAKey;
-  const cls = isMatch ? 'match' : 'mismatch';
-  const symbol = isMatch ? '✓ Same' : '✗ DIFFERENT';
-  const isFirst = firstPageAKey === null || step === pageAVisits[0]?.step;
-  const matchCell = isFirst ? '<span style="color:#888;">—(first)</span>' : `<span class="${cls}">${symbol}</span>`;
-  trackerBody.innerHTML += `<tr>
-    <td>${step}</td>
-    <td>${action}</td>
-    <td style="letter-spacing:0.5px;">${shortKey(key)}</td>
-    <td>${matchCell}</td>
-  </tr>`;
-}
-
 // ══════════════════════════════════════════════════════════
-// Navigation (SPA-style)
+// Navigation — uses History API (like Vue Router / Nuxt3)
+//
+// ★ This is the KEY DIFFERENCE from the vanilla version:
+//   - Forward: history.pushState()  (not navigation.navigate)
+//   - Back:    history.back()       (not navigation.back)
+//   - NO event.intercept()
 // ══════════════════════════════════════════════════════════
 function navigateTo(pagePath) {
-  const url = new URL(fullPath(pagePath), location.origin).href;
-  navigation.navigate(url);
+  lastNavMethod = 'history.pushState';
+  const url = basePath + pagePath;
+  history.pushState({ page: pagePath }, '', url);
+  updateUI();
+  // currententrychange should fire after this
 }
 
-// Wire up nav buttons
+function goBack() {
+  lastNavMethod = 'history.back';
+  history.back();
+  // popstate + currententrychange will fire
+}
+
+// Update UI on popstate (back/forward)
+window.addEventListener('popstate', () => {
+  updateUI();
+});
+
+// Wire buttons
 document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.path));
 });
-backBtn.addEventListener('click', () => {
-  if (navigation.canGoBack) navigation.back();
-});
-
-// Intercept all navigations → same-document (SPA)
-navigation.addEventListener('navigate', (event) => {
-  if (!event.canIntercept || event.hashChange) return;
-
-  event.intercept({
-    handler() {
-      const name = pageName(event.destination.url);
-      pageEl.textContent = name;
-      return Promise.resolve();
-    }
-  });
-});
+backBtn.addEventListener('click', () => goBack());
 
 // ══════════════════════════════════════════════════════════
-// Core: log & check key stability on every entry change
+// Observation — uses Navigation API's currententrychange
+//
+// This is the SINGLE place where we read keys and check
+// for the bug. It fires for both pushState and popstate.
 // ══════════════════════════════════════════════════════════
 navigation.addEventListener('currententrychange', () => {
   stepCount++;
+
   const entry = navigation.currentEntry;
-  const name  = pageName(entry.url);
+  const name  = toPageName(entry.url);
   const key   = entry.key;
   const id    = entry.id;
-  const navType = navigation.transition?.navigationType ?? '(initial)';
+  const method = lastNavMethod;
 
-  stepBadge.textContent = `Step ${stepCount} · ${navType}`;
-  pageEl.textContent = name;
-  updateActiveBtn();
-  updateBackBtn();
+  stepBadge.textContent = `Step ${stepCount} · ${method}`;
 
   // ── Log ──
-  log(`<span class="log-sep">───── Step ${stepCount} (${navType}) ─────</span>`);
-  log(`<span class="log-nav">→ ${name}</span>  key=<span class="log-key">${shortKey(key)}</span>  id=${shortKey(id)}`);
+  log(`<span class="log-sep">───── Step ${stepCount} ─────</span>`);
+  log(`  <span class="log-method">${method}</span> → <span class="log-nav">${name}</span>`);
+  log(`  key=<span class="log-key">${shortKey(key)}</span>  id=${shortKey(id)}`);
 
-  // Log entries list
   const entries = navigation.entries();
   const lines = entries.map((e, i) => {
-    const cur = e.key === key ? ' ◀ current' : '';
-    return `  [${i}] ${pageName(e.url).padEnd(7)} key=${shortKey(e.key)}${cur}`;
+    const cur = e.key === key ? ' ◀' : '';
+    return `  [${i}] ${toPageName(e.url).padEnd(7)} key=${shortKey(e.key)}${cur}`;
   }).join('\n');
   log(`<span class="log-entries">${lines}</span>`);
 
   // ── Key stability check for Page A ──
   if (name === 'Page A') {
-    const action = navType === 'traverse' ? '← Back' : navType === 'push' ? 'Navigate' : navType;
+    const action = method.includes('back') ? '← Back' : 'Navigate';
 
     if (firstPageAKey === null) {
       firstPageAKey = key;
-      pageAVisits.push({ step: stepCount, key, action });
-      updateKeyTracker(stepCount, action, key);
-      log(`<span class="log-ok">  ✓ Page A first visit – key recorded: ${shortKey(key)}</span>`);
+      pageAVisits.push({ step: stepCount, key });
+      addTrackerRow(stepCount, action, key, true);
+      log(`<span class="log-ok">  ✓ Page A first visit – key: ${shortKey(key)}</span>`);
     } else if (key === firstPageAKey) {
-      pageAVisits.push({ step: stepCount, key, action });
-      updateKeyTracker(stepCount, action, key);
-      log(`<span class="log-ok">  ✓ Page A key matches first visit – PASS</span>`);
+      pageAVisits.push({ step: stepCount, key });
+      addTrackerRow(stepCount, action, key, true);
+      log(`<span class="log-ok">  ✓ Page A key matches – PASS</span>`);
     } else {
-      // BUG: new key for the same slot
       bugDetected = true;
-      pageAVisits.push({ step: stepCount, key, action });
-      updateKeyTracker(stepCount, action, key);
-      log(`<span class="log-fail">  ✗ BUG: Page A received a NEW key!</span>`);
-      log(`<span class="log-fail">    Expected: ${shortKey(firstPageAKey)} (from step ${pageAVisits[0].step})</span>`);
+      pageAVisits.push({ step: stepCount, key });
+      addTrackerRow(stepCount, action, key, false);
+      log(`<span class="log-fail">  ✗ BUG: Page A has a NEW key!</span>`);
+      log(`<span class="log-fail">    Expected: ${shortKey(firstPageAKey)} (step ${pageAVisits[0].step})</span>`);
       log(`<span class="log-fail">    Got:      ${shortKey(key)}</span>`);
-      banner.textContent = `❌ BUG DETECTED (step ${stepCount}): Page A key changed from ${shortKey(firstPageAKey)} to ${shortKey(key)}`;
+      banner.textContent = `❌ BUG (step ${stepCount}): key changed ${shortKey(firstPageAKey)} → ${shortKey(key)}`;
       banner.className = 'fail';
     }
   }
 
-  // Show pass if we've completed the 5-step scenario without a bug
   if (stepCount >= 5 && !bugDetected && pageAVisits.length >= 2) {
-    banner.textContent = '✅ PASS – Page A key remained stable across all traversals';
+    banner.textContent = '✅ PASS – key remained stable across traversals';
     banner.className = 'pass';
   }
 
   log('');
 });
+
+function addTrackerRow(step, action, key, isMatch) {
+  trackerWrap.style.display = '';
+  const isFirst = pageAVisits.length === 0;
+  let matchCell;
+  if (isFirst) {
+    matchCell = '<span style="color:#888;">— (first)</span>';
+  } else {
+    matchCell = isMatch
+      ? '<span class="match">✓ Same</span>'
+      : '<span class="mismatch">✗ DIFFERENT</span>';
+  }
+  trackerBody.innerHTML += `<tr>
+    <td>${step}</td><td>${action}</td>
+    <td style="letter-spacing:0.5px;">${shortKey(key)}</td>
+    <td>${matchCell}</td>
+  </tr>`;
+}
 
 // ══════════════════════════════════════════════════════════
 // Reset
@@ -343,35 +322,28 @@ function resetAll() {
   bugDetected = false;
   trackerBody.innerHTML = '';
   trackerWrap.style.display = 'none';
-  banner.className = '';
-  banner.style.display = 'none';
-  banner.textContent = '';
-  log('<span class="log-dim">Reset. Follow the reproduction steps above.</span>\n');
+  banner.className = ''; banner.style.display = 'none'; banner.textContent = '';
+  log('<span class="log-dim">Reset. Follow the steps above.</span>\n');
 }
 
 // ══════════════════════════════════════════════════════════
 // Init
 // ══════════════════════════════════════════════════════════
-if (!('navigation' in window)) {
-  pageEl.textContent = '⚠ Navigation API not supported';
-  log('<span class="log-fail">Navigation API is not available.</span>');
-  log('<span class="log-fail">Requires Safari 26+, Chrome 102+, or Edge 102+.</span>');
+envInfo.textContent = [
+  `UA: ${navigator.userAgent}`,
+  `basePath: "${basePath || '(root)'}"`,
+  `navigation API: ${'navigation' in window ? 'YES' : 'NO'}`
+].join(' | ');
+
+log(`<span class="log-dim">Mode: history.pushState + history.back</span>`);
+log(`<span class="log-dim">      (NO navigation.navigate, NO event.intercept)</span>`);
+log(`<span class="log-dim">basePath: "${basePath || '(root)'}"</span>`);
+log('');
+
+if (!location.pathname.endsWith('/page-a')) {
+  navigateTo('/page-a');
 } else {
-  // Show environment info
-  envInfo.textContent = `UA: ${navigator.userAgent} | basePath: ${basePath || '(root)'}`;
-
-  log(`<span class="log-dim">Base path: ${basePath || '(root)'}</span>`);
-  log(`<span class="log-dim">Ready. Follow the reproduction steps above.</span>\n`);
-
-  // Auto-navigate to Page A if not already there
-  const currentPath = location.pathname;
-  if (!currentPath.endsWith('/page-a')) {
-    navigateTo('/page-a');
-  } else {
-    pageEl.textContent = 'Page A';
-    updateActiveBtn();
-    updateBackBtn();
-  }
+  updateUI();
 }
 </script>
 </body>
