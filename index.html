@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebKit Navigation API – key stability bug repro</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    padding: 16px; max-width: 720px; margin: 0 auto; color: #1a1a1a;
+  }
+  h1 { font-size: 1.15rem; margin-bottom: 2px; }
+  .subtitle { font-size: 0.8rem; color: #666; margin-bottom: 14px; }
+  .subtitle a { color: #0066cc; }
+
+  /* Steps guide */
+  .steps {
+    font-size: 0.82rem; color: #444; line-height: 1.6;
+    margin-bottom: 14px; padding: 10px 14px;
+    background: #fffbe6; border-radius: 8px; border: 1px solid #f0e6b0;
+  }
+  .steps ol { padding-left: 1.4em; }
+  .steps b { color: #222; }
+
+  /* Current page display */
+  .current-page {
+    font-size: 1.3rem; font-weight: 700; margin: 10px 0;
+    padding: 12px 16px; background: #f0f4ff; border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .current-page .step-badge {
+    font-size: 0.75rem; font-weight: 500; color: #555;
+    background: #e0e6f0; padding: 3px 8px; border-radius: 4px;
+  }
+
+  /* Nav buttons */
+  nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  nav button {
+    padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px;
+    background: #fff; font-size: 0.9rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  nav button:active { background: #e8e8e8; }
+  nav button.active { background: #0066cc; color: #fff; border-color: #0066cc; }
+  nav button.back-btn { margin-left: auto; }
+
+  /* Result banner */
+  #result-banner {
+    padding: 10px 14px; border-radius: 6px; font-weight: 600;
+    font-size: 0.88rem; margin: 10px 0; display: none;
+  }
+  #result-banner.pass { display: block; background: #e6f9e6; color: #1a7a1a; border: 1px solid #b0e0b0; }
+  #result-banner.fail { display: block; background: #fde8e8; color: #c0392b; border: 1px solid #f0b0b0; }
+
+  /* Key tracker table */
+  .key-tracker { margin: 10px 0; }
+  .key-tracker table {
+    width: 100%; border-collapse: collapse; font-size: 0.8rem;
+  }
+  .key-tracker th {
+    text-align: left; font-size: 0.72rem; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #888; padding: 4px 8px;
+    border-bottom: 1px solid #ddd;
+  }
+  .key-tracker td { padding: 5px 8px; border-bottom: 1px solid #eee; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem; }
+  .key-tracker .match { color: #1a7a1a; }
+  .key-tracker .mismatch { color: #c0392b; font-weight: bold; }
+
+  /* Log panel */
+  .log-header { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+  .section-title { font-weight: 600; font-size: 0.82rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+  .clear-btn { padding: 4px 10px; font-size: 0.72rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+  #log {
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.75rem;
+    line-height: 1.65; background: #1e1e1e; color: #d4d4d4;
+    padding: 12px; border-radius: 8px; margin-top: 6px;
+    max-height: 380px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  }
+  .log-nav { color: #569cd6; }
+  .log-key { color: #ce9178; }
+  .log-ok { color: #6a9955; }
+  .log-fail { color: #f44747; font-weight: bold; }
+  .log-sep { color: #666; }
+  .log-entries { color: #9cdcfe; }
+  .log-dim { color: #888; }
+
+  /* Environment info */
+  .env-info {
+    margin-top: 16px; font-size: 0.72rem; color: #999; line-height: 1.5;
+    border-top: 1px solid #eee; padding-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Navigation API – <code>key</code> stability bug repro</h1>
+<p class="subtitle">
+  WebKit Bugzilla – minimal SPA repro &nbsp;|&nbsp;
+  <a href="https://github.com/nicobrinkkemper/webkit-navigation-key-bug" target="_blank">Source</a>
+</p>
+
+<div class="steps">
+  <strong>Steps to reproduce:</strong>
+  <ol>
+    <li>Click <b>Page A</b> (auto-navigated on load)</li>
+    <li>Click <b>Page B</b></li>
+    <li>Press <b>← Back</b> → returns to Page A → key should match step 1</li>
+    <li>Click <b>Page C</b></li>
+    <li>Press <b>← Back</b> → returns to Page A → <b>key must still match step 1</b></li>
+  </ol>
+  <div style="margin-top:6px; font-size:0.78rem; color:#888;">
+    Use the ← Back button below, or the iOS Safari swipe-back gesture / browser back button.
+  </div>
+</div>
+
+<nav id="nav-buttons">
+  <button data-path="/page-a">Page A</button>
+  <button data-path="/page-b">Page B</button>
+  <button data-path="/page-c">Page C</button>
+  <button data-path="/page-d">Page D</button>
+  <button class="back-btn" id="back-btn" disabled>← Back</button>
+</nav>
+
+<div class="current-page">
+  <span id="current-page">—</span>
+  <span class="step-badge" id="step-badge"></span>
+</div>
+
+<div id="result-banner"></div>
+
+<!-- Key tracker for Page A -->
+<div class="key-tracker" id="key-tracker" style="display:none;">
+  <table>
+    <thead><tr><th>Step</th><th>Action</th><th>Page A key</th><th>Match?</th></tr></thead>
+    <tbody id="key-tracker-body"></tbody>
+  </table>
+</div>
+
+<div class="log-header">
+  <span class="section-title">Event log</span>
+  <button class="clear-btn" onclick="resetAll()">Reset</button>
+</div>
+<div id="log"></div>
+
+<div class="env-info" id="env-info"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// Configuration
+// ══════════════════════════════════════════════════════════
+
+// Base path: detects GitHub Pages subdirectory automatically.
+// e.g. https://user.github.io/repo-name/ → basePath = "/repo-name"
+const basePath = (() => {
+  const meta = document.querySelector('meta[name="base-path"]');
+  if (meta) return meta.content;
+  // Heuristic: if the initial path contains a known page suffix, strip it
+  const p = location.pathname;
+  const knownPages = ['/page-a', '/page-b', '/page-c', '/page-d'];
+  for (const pg of knownPages) {
+    const idx = p.indexOf(pg);
+    if (idx !== -1) return p.slice(0, idx);
+  }
+  // Otherwise assume everything is the base (e.g. /repo-name/)
+  return p.replace(/\/+$/, '');
+})();
+
+// ══════════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════════
+let firstPageAKey = null;
+let pageAVisits = [];     // { step, key, navigationType }
+let stepCount = 0;
+let bugDetected = false;
+
+// DOM refs
+const logEl       = document.getElementById('log');
+const pageEl      = document.getElementById('current-page');
+const stepBadge   = document.getElementById('step-badge');
+const banner      = document.getElementById('result-banner');
+const backBtn     = document.getElementById('back-btn');
+const trackerWrap = document.getElementById('key-tracker');
+const trackerBody = document.getElementById('key-tracker-body');
+const envInfo     = document.getElementById('env-info');
+
+// ══════════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════════
+function log(html) {
+  logEl.innerHTML += html + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function pageName(url) {
+  try {
+    const p = new URL(url).pathname;
+    if (p.endsWith('/page-a')) return 'Page A';
+    if (p.endsWith('/page-b')) return 'Page B';
+    if (p.endsWith('/page-c')) return 'Page C';
+    if (p.endsWith('/page-d')) return 'Page D';
+    return p;
+  } catch { return url; }
+}
+
+function shortKey(key) {
+  return key ? key.slice(0, 8) : '(none)';
+}
+
+function fullPath(page) {
+  return basePath + page;
+}
+
+function updateBackBtn() {
+  backBtn.disabled = !navigation.canGoBack;
+}
+
+function updateActiveBtn() {
+  const current = navigation.currentEntry?.url;
+  if (!current) return;
+  const path = new URL(current).pathname;
+  document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
+    const match = path.endsWith(btn.dataset.path);
+    btn.classList.toggle('active', match);
+  });
+}
+
+function updateKeyTracker(step, action, key) {
+  trackerWrap.style.display = '';
+  const isMatch = key === firstPageAKey;
+  const cls = isMatch ? 'match' : 'mismatch';
+  const symbol = isMatch ? '✓ Same' : '✗ DIFFERENT';
+  const isFirst = firstPageAKey === null || step === pageAVisits[0]?.step;
+  const matchCell = isFirst ? '<span style="color:#888;">—(first)</span>' : `<span class="${cls}">${symbol}</span>`;
+  trackerBody.innerHTML += `<tr>
+    <td>${step}</td>
+    <td>${action}</td>
+    <td style="letter-spacing:0.5px;">${shortKey(key)}</td>
+    <td>${matchCell}</td>
+  </tr>`;
+}
+
+// ══════════════════════════════════════════════════════════
+// Navigation (SPA-style)
+// ══════════════════════════════════════════════════════════
+function navigateTo(pagePath) {
+  const url = new URL(fullPath(pagePath), location.origin).href;
+  navigation.navigate(url);
+}
+
+// Wire up nav buttons
+document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
+  btn.addEventListener('click', () => navigateTo(btn.dataset.path));
+});
+backBtn.addEventListener('click', () => {
+  if (navigation.canGoBack) navigation.back();
+});
+
+// Intercept all navigations → same-document (SPA)
+navigation.addEventListener('navigate', (event) => {
+  if (!event.canIntercept || event.hashChange) return;
+
+  event.intercept({
+    handler() {
+      const name = pageName(event.destination.url);
+      pageEl.textContent = name;
+      return Promise.resolve();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Core: log & check key stability on every entry change
+// ══════════════════════════════════════════════════════════
+navigation.addEventListener('currententrychange', () => {
+  stepCount++;
+  const entry = navigation.currentEntry;
+  const name  = pageName(entry.url);
+  const key   = entry.key;
+  const id    = entry.id;
+  const navType = navigation.transition?.navigationType ?? '(initial)';
+
+  stepBadge.textContent = `Step ${stepCount} · ${navType}`;
+  pageEl.textContent = name;
+  updateActiveBtn();
+  updateBackBtn();
+
+  // ── Log ──
+  log(`<span class="log-sep">───── Step ${stepCount} (${navType}) ─────</span>`);
+  log(`<span class="log-nav">→ ${name}</span>  key=<span class="log-key">${shortKey(key)}</span>  id=${shortKey(id)}`);
+
+  // Log entries list
+  const entries = navigation.entries();
+  const lines = entries.map((e, i) => {
+    const cur = e.key === key ? ' ◀ current' : '';
+    return `  [${i}] ${pageName(e.url).padEnd(7)} key=${shortKey(e.key)}${cur}`;
+  }).join('\n');
+  log(`<span class="log-entries">${lines}</span>`);
+
+  // ── Key stability check for Page A ──
+  if (name === 'Page A') {
+    const action = navType === 'traverse' ? '← Back' : navType === 'push' ? 'Navigate' : navType;
+
+    if (firstPageAKey === null) {
+      firstPageAKey = key;
+      pageAVisits.push({ step: stepCount, key, action });
+      updateKeyTracker(stepCount, action, key);
+      log(`<span class="log-ok">  ✓ Page A first visit – key recorded: ${shortKey(key)}</span>`);
+    } else if (key === firstPageAKey) {
+      pageAVisits.push({ step: stepCount, key, action });
+      updateKeyTracker(stepCount, action, key);
+      log(`<span class="log-ok">  ✓ Page A key matches first visit – PASS</span>`);
+    } else {
+      // BUG: new key for the same slot
+      bugDetected = true;
+      pageAVisits.push({ step: stepCount, key, action });
+      updateKeyTracker(stepCount, action, key);
+      log(`<span class="log-fail">  ✗ BUG: Page A received a NEW key!</span>`);
+      log(`<span class="log-fail">    Expected: ${shortKey(firstPageAKey)} (from step ${pageAVisits[0].step})</span>`);
+      log(`<span class="log-fail">    Got:      ${shortKey(key)}</span>`);
+      banner.textContent = `❌ BUG DETECTED (step ${stepCount}): Page A key changed from ${shortKey(firstPageAKey)} to ${shortKey(key)}`;
+      banner.className = 'fail';
+    }
+  }
+
+  // Show pass if we've completed the 5-step scenario without a bug
+  if (stepCount >= 5 && !bugDetected && pageAVisits.length >= 2) {
+    banner.textContent = '✅ PASS – Page A key remained stable across all traversals';
+    banner.className = 'pass';
+  }
+
+  log('');
+});
+
+// ══════════════════════════════════════════════════════════
+// Reset
+// ══════════════════════════════════════════════════════════
+function resetAll() {
+  logEl.innerHTML = '';
+  firstPageAKey = null;
+  pageAVisits = [];
+  stepCount = 0;
+  bugDetected = false;
+  trackerBody.innerHTML = '';
+  trackerWrap.style.display = 'none';
+  banner.className = '';
+  banner.style.display = 'none';
+  banner.textContent = '';
+  log('<span class="log-dim">Reset. Follow the reproduction steps above.</span>\n');
+}
+
+// ══════════════════════════════════════════════════════════
+// Init
+// ══════════════════════════════════════════════════════════
+if (!('navigation' in window)) {
+  pageEl.textContent = '⚠ Navigation API not supported';
+  log('<span class="log-fail">Navigation API is not available.</span>');
+  log('<span class="log-fail">Requires Safari 26+, Chrome 102+, or Edge 102+.</span>');
+} else {
+  // Show environment info
+  envInfo.textContent = `UA: ${navigator.userAgent} | basePath: ${basePath || '(root)'}`;
+
+  log(`<span class="log-dim">Base path: ${basePath || '(root)'}</span>`);
+  log(`<span class="log-dim">Ready. Follow the reproduction steps above.</span>\n`);
+
+  // Auto-navigate to Page A if not already there
+  const currentPath = location.pathname;
+  if (!currentPath.endsWith('/page-a')) {
+    navigateTo('/page-a');
+  } else {
+    pageEl.textContent = 'Page A';
+    updateActiveBtn();
+    updateBackBtn();
+  }
+}
+</script>
+</body>
+</html>
