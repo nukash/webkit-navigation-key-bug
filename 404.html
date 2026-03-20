@@ -3,198 +3,163 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebKit Navigation API – replaceState key corruption (minimal repro)</title>
+<title>WebKit Bug: replaceState corrupts NavigationHistoryEntry.key</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    padding: 16px; max-width: 720px; margin: 0 auto; color: #1a1a1a;
+    padding: 16px; max-width: 640px; margin: 0 auto; color: #1a1a1a;
+    line-height: 1.5;
   }
-  h1 { font-size: 1.15rem; margin-bottom: 2px; }
-  .subtitle { font-size: 0.8rem; color: #666; margin-bottom: 14px; }
-  .mode-badge {
-    display: inline-block; font-size: 0.72rem; font-weight: 600;
-    padding: 3px 8px; border-radius: 4px; margin-bottom: 10px;
-    background: #fce4ec; color: #b71c1c; border: 1px solid #ef9a9a;
-  }
-  .mode-badge code { font-size: 0.72rem; background: #ffcdd2; padding: 1px 4px; border-radius: 2px; }
+  h1 { font-size: 1.1rem; margin-bottom: 4px; }
+  .subtitle { font-size: 0.78rem; color: #666; margin-bottom: 16px; }
 
-  /* Two-column layout for tests */
-  .test-columns { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
-  .test-card {
-    flex: 1; min-width: 280px; padding: 12px; border-radius: 8px;
-    border: 1px solid #ddd; background: #fafafa;
+  /* Steps */
+  .step {
+    margin-bottom: 10px; padding: 12px 14px;
+    border: 1px solid #ddd; border-radius: 8px; background: #fafafa;
+    transition: border-color 0.2s, background 0.2s;
   }
-  .test-card h2 { font-size: 0.88rem; margin-bottom: 8px; }
-  .test-card .desc { font-size: 0.78rem; color: #555; margin-bottom: 10px; line-height: 1.5; }
-  .test-card button {
-    width: 100%; padding: 10px; border: none; border-radius: 6px;
-    font-size: 0.88rem; font-weight: 600; cursor: pointer;
+  .step.done { border-color: #b0dab0; background: #f4faf4; }
+  .step.fail { border-color: #f0b0b0; background: #fef4f4; }
+  .step.current { border-color: #80b0e0; background: #f0f6ff; }
+
+  .step-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%; font-size: 0.75rem;
+    font-weight: 700; background: #ddd; color: #666; flex-shrink: 0;
+  }
+  .step.done .step-num { background: #4caf50; color: #fff; }
+  .step.fail .step-num { background: #e53935; color: #fff; }
+  .step.current .step-num { background: #1976d2; color: #fff; }
+
+  .step-title { font-weight: 600; font-size: 0.88rem; }
+  .step-code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.76rem; color: #555; margin: 4px 0 8px;
+    padding: 6px 10px; background: #f0f0f0; border-radius: 4px;
+  }
+  .step button.exec {
+    padding: 7px 18px; border: none; border-radius: 6px;
+    font-size: 0.82rem; font-weight: 600; cursor: pointer;
+    background: #1976d2; color: #fff;
     -webkit-tap-highlight-color: transparent;
   }
-  .test-card button.run { background: #0066cc; color: #fff; }
-  .test-card button.run:active { background: #004499; }
-  .test-card .result {
-    margin-top: 8px; padding: 8px; border-radius: 4px;
-    font-size: 0.8rem; font-family: "SF Mono", Menlo, Consolas, monospace;
-    line-height: 1.5; display: none;
-  }
-  .test-card .result.pass { display: block; background: #e6f9e6; color: #1a7a1a; }
-  .test-card .result.fail { display: block; background: #fde8e8; color: #c0392b; }
+  .step button.exec:active { background: #1565c0; }
+  .step button.exec:disabled { background: #bbb; cursor: default; }
 
-  /* Separator */
-  .separator {
-    margin: 18px 0; padding: 10px 0; border-top: 1px solid #eee;
-    font-size: 0.82rem; font-weight: 600; color: #555;
+  .step-result {
+    margin-top: 8px; padding: 6px 10px; border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.76rem; line-height: 1.6; display: none;
   }
+  .step-result.show { display: block; }
+  .step-result.ok { background: #e8f5e9; color: #2e7d32; }
+  .step-result.bad { background: #ffebee; color: #c62828; }
+  .step-result.info { background: #e3f2fd; color: #1565c0; }
 
-  /* Manual mode */
-  .manual-steps {
-    font-size: 0.82rem; color: #444; line-height: 1.6;
-    margin-bottom: 14px; padding: 10px 14px;
-    background: #fffbe6; border-radius: 8px; border: 1px solid #f0e6b0;
+  /* Final verdict */
+  #verdict {
+    margin: 16px 0; padding: 12px 14px; border-radius: 8px;
+    font-weight: 600; font-size: 0.9rem; display: none;
   }
-  .manual-steps ol { padding-left: 1.4em; }
-  nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-  nav button {
-    padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px;
-    background: #fff; font-size: 0.9rem; cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
+  #verdict.pass { display: block; background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+  #verdict.fail { display: block; background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+
+  /* Explanation */
+  .explanation {
+    margin-top: 16px; padding: 12px 14px; font-size: 0.8rem;
+    background: #fff8e1; border-radius: 8px; border: 1px solid #ffe082;
+    color: #555; line-height: 1.6;
   }
-  nav button:active { background: #e8e8e8; }
-  nav button.active { background: #0066cc; color: #fff; border-color: #0066cc; }
-  nav button.back-btn { margin-left: auto; }
-  .current-page {
-    font-size: 1.1rem; font-weight: 700; margin: 8px 0;
-    padding: 10px 14px; background: #f0f4ff; border-radius: 8px;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .current-page .step-badge {
-    font-size: 0.72rem; font-weight: 500; color: #555;
-    background: #e0e6f0; padding: 3px 8px; border-radius: 4px;
-  }
-  #result-banner {
-    padding: 10px 14px; border-radius: 6px; font-weight: 600;
-    font-size: 0.88rem; margin: 8px 0; display: none;
-  }
-  #result-banner.pass { display: block; background: #e6f9e6; color: #1a7a1a; border: 1px solid #b0e0b0; }
-  #result-banner.fail { display: block; background: #fde8e8; color: #c0392b; border: 1px solid #f0b0b0; }
-  .key-tracker { margin: 8px 0; }
-  .key-tracker table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-  .key-tracker th {
-    text-align: left; font-size: 0.72rem; text-transform: uppercase;
-    letter-spacing: 0.05em; color: #888; padding: 4px 8px; border-bottom: 1px solid #ddd;
-  }
-  .key-tracker td {
-    padding: 5px 8px; border-bottom: 1px solid #eee;
-    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem;
-  }
-  .match { color: #1a7a1a; } .mismatch { color: #c0392b; font-weight: bold; }
-  .log-header { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
-  .section-title { font-weight: 600; font-size: 0.82rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
-  .clear-btn { padding: 4px 10px; font-size: 0.72rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
-  #log {
-    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.75rem;
-    line-height: 1.65; background: #1e1e1e; color: #d4d4d4;
-    padding: 12px; border-radius: 8px; margin-top: 6px;
-    max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
-  }
-  .log-nav { color: #569cd6; } .log-key { color: #ce9178; }
-  .log-ok { color: #6a9955; } .log-fail { color: #f44747; font-weight: bold; }
-  .log-sep { color: #666; } .log-entries { color: #9cdcfe; }
-  .log-dim { color: #888; } .log-method { color: #dcdcaa; }
+  .explanation b { color: #333; }
+
   .env-info {
-    margin-top: 16px; font-size: 0.72rem; color: #999; line-height: 1.5;
-    border-top: 1px solid #eee; padding-top: 10px;
+    margin-top: 16px; font-size: 0.7rem; color: #aaa; line-height: 1.4;
+    border-top: 1px solid #eee; padding-top: 8px;
+    word-break: break-all;
   }
 </style>
 </head>
 <body>
 
-<h1>Navigation API – <code>replaceState</code> corrupts <code>key</code></h1>
-<p class="subtitle">WebKit Bugzilla – minimal reproduction</p>
+<h1><code>history.replaceState()</code> corrupts
+  <code>NavigationHistoryEntry.key</code></h1>
+<p class="subtitle">
+  WebKit Bugzilla – minimal step-by-step reproduction
+</p>
 
-<div class="mode-badge">
-  Root cause: <code>history.replaceState()</code> on a traversed-back entry
-  causes <code>NavigationHistoryEntry.key</code> to change
-</div>
-
-<!-- ════════════════════════════════════════════════════ -->
-<!-- Automated tests                                     -->
-<!-- ════════════════════════════════════════════════════ -->
-<div class="test-columns">
-
-  <div class="test-card">
-    <h2>Test A: replaceState alone</h2>
-    <div class="desc">
-      pushState(A) → pushState(B) → back → <b>replaceState on A</b><br>
-      Does the key change from just replaceState?
-    </div>
-    <button class="run" onclick="runTestA()">Run Test A</button>
-    <div class="result" id="result-a"></div>
+<!-- Step 1 -->
+<div class="step current" id="s1">
+  <div class="step-header">
+    <span class="step-num">1</span>
+    <span class="step-title">Navigate to Page A</span>
   </div>
+  <div class="step-code">history.pushState({}, '', '/page-a')</div>
+  <button class="exec" onclick="execStep1()">Run step 1</button>
+  <div class="step-result" id="r1"></div>
+</div>
 
-  <div class="test-card">
-    <h2>Test B: replaceState + pushState</h2>
-    <div class="desc">
-      pushState(A) → pushState(B) → back → <b>replaceState then pushState(C)</b> → back<br>
-      Vue Router pattern. Does A's key survive?
-    </div>
-    <button class="run" onclick="runTestB()">Run Test B</button>
-    <div class="result" id="result-b"></div>
+<!-- Step 2 -->
+<div class="step" id="s2">
+  <div class="step-header">
+    <span class="step-num">2</span>
+    <span class="step-title">Navigate to Page B</span>
   </div>
-
+  <div class="step-code">history.pushState({}, '', '/page-b')</div>
+  <button class="exec" onclick="execStep2()" disabled>Run step 2</button>
+  <div class="step-result" id="r2"></div>
 </div>
 
-<!-- ════════════════════════════════════════════════════ -->
-<!-- Manual mode (same as Step 2)                        -->
-<!-- ════════════════════════════════════════════════════ -->
-<div class="separator">Manual test (same as Step 2)</div>
-
-<div class="manual-steps">
-  <ol>
-    <li>Click <b>Page A</b></li>
-    <li>Click <b>Page B</b></li>
-    <li><b>← Back</b> (Page A)</li>
-    <li>Click <b>Page C</b> → check if Page A key changed</li>
-    <li><b>← Back</b> (Page A) → confirm key mismatch</li>
-  </ol>
+<!-- Step 3 -->
+<div class="step" id="s3">
+  <div class="step-header">
+    <span class="step-num">3</span>
+    <span class="step-title">Go back to Page A</span>
+  </div>
+  <div class="step-code">history.back()</div>
+  <button class="exec" onclick="execStep3()" disabled>Run step 3</button>
+  <div class="step-result" id="r3"></div>
 </div>
 
-<nav id="nav-buttons">
-  <button data-path="/page-a">Page A</button>
-  <button data-path="/page-b">Page B</button>
-  <button data-path="/page-c">Page C</button>
-  <button data-path="/page-d">Page D</button>
-  <button class="back-btn" id="back-btn">← Back</button>
-</nav>
-
-<div class="current-page">
-  <span id="current-page">—</span>
-  <span class="step-badge" id="step-badge"></span>
-</div>
-<div id="result-banner"></div>
-<div class="key-tracker" id="key-tracker" style="display:none;">
-  <table>
-    <thead><tr><th>Step</th><th>Action</th><th>Page A key</th><th>Match?</th></tr></thead>
-    <tbody id="key-tracker-body"></tbody>
-  </table>
+<!-- Step 4 -->
+<div class="step" id="s4">
+  <div class="step-header">
+    <span class="step-num">4</span>
+    <span class="step-title">Call replaceState on Page A</span>
+  </div>
+  <div class="step-code">history.replaceState({ updated: true }, '')</div>
+  <button class="exec" onclick="execStep4()" disabled>Run step 4</button>
+  <div class="step-result" id="r4"></div>
 </div>
 
-<div class="log-header">
-  <span class="section-title">Event log</span>
-  <button class="clear-btn" onclick="resetManual()">Reset</button>
+<div id="verdict"></div>
+
+<div class="explanation">
+  <b>What this tests:</b><br>
+  Per the spec, <code>NavigationHistoryEntry.key</code> identifies a
+  <b>slot</b> in the history list. Calling <code>replaceState()</code>
+  updates the entry's state, but the slot is the same — so the
+  <code>key</code> must not change.<br><br>
+  <b>Impact:</b> Vue Router, React Router, and other SPA frameworks call
+  <code>replaceState()</code> before every navigation. This causes
+  all <code>key</code> values to become unstable, breaking
+  <code>navigation.traverseTo(savedKey)</code> and any code that
+  relies on key stability for state management.
 </div>
-<div id="log"></div>
+
 <div class="env-info" id="env-info"></div>
 
 <script>
 // ══════════════════════════════════════════════════════════
-// Base path
+// Base path (for GitHub Pages subdirectory)
 // ══════════════════════════════════════════════════════════
 const basePath = (() => {
   const p = location.pathname;
-  for (const pg of ['/page-a', '/page-b', '/page-c', '/page-d']) {
+  for (const pg of ['/page-a', '/page-b']) {
     const idx = p.indexOf(pg);
     if (idx !== -1) return p.slice(0, idx);
   }
@@ -202,237 +167,125 @@ const basePath = (() => {
 })();
 
 // ══════════════════════════════════════════════════════════
-// Automated Test A: replaceState alone
+// State
 // ══════════════════════════════════════════════════════════
-async function runTestA() {
-  const el = document.getElementById('result-a');
-  el.className = 'result'; el.style.display = 'none';
+let keyA_initial = null;
 
-  // Setup: pushState A, pushState B
-  history.replaceState({ pos: 0 }, '', basePath + '/page-a');
-  await tick();
-  const keyA_before = navigation.currentEntry.key;
+function shortKey(k) { return k ? k.slice(0, 12) : '(none)'; }
 
-  history.pushState({ pos: 1 }, '', basePath + '/page-b');
-  await tick();
+function showResult(id, cls, text) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'step-result show ' + cls;
+}
 
-  // Back to A
-  history.back();
-  await waitForPopstate();
+function markStep(stepId, cls) {
+  // Remove 'current' from all, set class on this step
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('current'));
+  document.getElementById(stepId).className = 'step ' + cls;
+}
 
-  const keyA_after_back = navigation.currentEntry.key;
-
-  // ★ replaceState on A (the suspected cause)
-  history.replaceState({ pos: 0, extra: 'updated' }, '');
-  await tick();
-
-  const keyA_after_replace = navigation.currentEntry.key;
-
-  // Report
-  const lines = [];
-  lines.push(`Key A (initial):        ${shortK(keyA_before)}`);
-  lines.push(`Key A (after back):     ${shortK(keyA_after_back)}  ${keyA_after_back === keyA_before ? '✓' : '✗ CHANGED'}`);
-  lines.push(`Key A (after replace):  ${shortK(keyA_after_replace)}  ${keyA_after_replace === keyA_before ? '✓' : '✗ CHANGED'}`);
-
-  const passed = keyA_after_replace === keyA_before;
-  el.textContent = lines.join('\n');
-  el.className = 'result ' + (passed ? 'pass' : 'fail');
+function enableNext(stepId) {
+  const btn = document.querySelector(`#${stepId} button.exec`);
+  if (btn) btn.disabled = false;
+  document.getElementById(stepId).classList.add('current');
 }
 
 // ══════════════════════════════════════════════════════════
-// Automated Test B: replaceState + pushState (Vue Router)
+// Step 1: pushState to Page A
 // ══════════════════════════════════════════════════════════
-async function runTestB() {
-  const el = document.getElementById('result-b');
-  el.className = 'result'; el.style.display = 'none';
+function execStep1() {
+  history.pushState({}, '', basePath + '/page-a');
 
-  // Setup: push A
-  history.replaceState({ pos: 0 }, '', basePath + '/page-a');
-  await tick();
-  const keyA_initial = navigation.currentEntry.key;
+  // Read key after a tick
+  setTimeout(() => {
+    keyA_initial = navigation.currentEntry.key;
+    const url = navigation.currentEntry.url;
 
-  // Push B (with Vue Router pattern: replaceState + pushState)
-  history.replaceState({ ...history.state, forward: basePath + '/page-b' }, '');
-  history.pushState({ pos: 1, back: basePath + '/page-a' }, '', basePath + '/page-b');
-  await tick();
-
-  // Back to A
-  history.back();
-  await waitForPopstate();
-  const keyA_after_back1 = navigation.currentEntry.key;
-
-  // ★ Push C with Vue Router pattern (replaceState on A, then pushState C)
-  history.replaceState({ ...history.state, forward: basePath + '/page-c' }, '');
-  history.pushState({ pos: 2, back: basePath + '/page-a' }, '', basePath + '/page-c');
-  await tick();
-
-  // Back to A again
-  history.back();
-  await waitForPopstate();
-  const keyA_after_back2 = navigation.currentEntry.key;
-
-  // Also check: what does entries() show for A's slot now?
-  const entries = navigation.entries();
-  const aEntries = entries.filter(e => toPN(e.url) === 'Page A');
-
-  // Report
-  const lines = [];
-  lines.push(`Key A (initial):       ${shortK(keyA_initial)}`);
-  lines.push(`Key A (back from B):   ${shortK(keyA_after_back1)}  ${keyA_after_back1 === keyA_initial ? '✓' : '✗'}`);
-  lines.push(`Key A (back from C):   ${shortK(keyA_after_back2)}  ${keyA_after_back2 === keyA_initial ? '✓' : '✗ CHANGED'}`);
-  lines.push(`entries with Page A: ${aEntries.length}`);
-
-  const passed = keyA_after_back2 === keyA_initial;
-  el.textContent = lines.join('\n');
-  el.className = 'result ' + (passed ? 'pass' : 'fail');
+    showResult('r1', 'info',
+      `url: ${url}\nkey: ${shortKey(keyA_initial)}\n→ Recorded as Page A's key.`);
+    markStep('s1', 'done');
+    enableNext('s2');
+  }, 50);
 }
 
-// ── Test helpers ──
-function tick() { return new Promise(r => setTimeout(r, 60)); }
-function waitForPopstate() {
-  return new Promise(r => {
-    window.addEventListener('popstate', () => setTimeout(r, 60), { once: true });
+// ══════════════════════════════════════════════════════════
+// Step 2: pushState to Page B
+// ══════════════════════════════════════════════════════════
+function execStep2() {
+  history.pushState({}, '', basePath + '/page-b');
+
+  setTimeout(() => {
+    const key = navigation.currentEntry.key;
+    const url = navigation.currentEntry.url;
+
+    showResult('r2', 'info',
+      `url: ${url}\nkey: ${shortKey(key)}`);
+    markStep('s2', 'done');
+    enableNext('s3');
+  }, 50);
+}
+
+// ══════════════════════════════════════════════════════════
+// Step 3: history.back() to Page A
+// ══════════════════════════════════════════════════════════
+function execStep3() {
+  window.addEventListener('popstate', function onPop() {
+    window.removeEventListener('popstate', onPop);
+    setTimeout(() => {
+      const key = navigation.currentEntry.key;
+      const url = navigation.currentEntry.url;
+      const match = key === keyA_initial;
+
+      showResult('r3', match ? 'ok' : 'bad',
+        `url: ${url}\nkey: ${shortKey(key)}\n${match
+          ? '✓ Key matches step 1 (expected).'
+          : '✗ Key already changed — bug may have a different trigger.'}`);
+      markStep('s3', match ? 'done' : 'fail');
+      if (match) enableNext('s4');
+    }, 50);
   });
-}
-function shortK(k) { return k ? k.slice(0, 12) : '(none)'; }
-function toPN(url) {
-  try {
-    const p = new URL(url, location.origin).pathname;
-    if (p.endsWith('/page-a')) return 'Page A';
-    if (p.endsWith('/page-b')) return 'Page B';
-    if (p.endsWith('/page-c')) return 'Page C';
-    if (p.endsWith('/page-d')) return 'Page D';
-    return p;
-  } catch { return url; }
-}
 
-// ══════════════════════════════════════════════════════════
-// Manual mode (same logic as Step 2)
-// ══════════════════════════════════════════════════════════
-let firstPageAKey = null;
-let pageAVisits = [];
-let stepCount = 0;
-let bugDetected = false;
-let lastNavMethod = '(init)';
-let historyPosition = 0;
-
-const logEl       = document.getElementById('log');
-const pageEl      = document.getElementById('current-page');
-const stepBadge   = document.getElementById('step-badge');
-const banner      = document.getElementById('result-banner');
-const trackerWrap = document.getElementById('key-tracker');
-const trackerBody = document.getElementById('key-tracker-body');
-
-function log(html) { logEl.innerHTML += html + '\n'; logEl.scrollTop = logEl.scrollHeight; }
-function shortKey(k) { return k ? k.slice(0, 8) : '(none)'; }
-function toPageName(url) { return toPN(url); }
-
-function updateUI() {
-  pageEl.textContent = toPN(location.pathname);
-  document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
-    btn.classList.toggle('active', location.pathname.endsWith(btn.dataset.path));
-  });
-}
-
-function navigateTo(pagePath) {
-  lastNavMethod = 'replaceState+pushState';
-  const currentUrl = location.pathname;
-  const newUrl = basePath + pagePath;
-  const currentState = history.state || {};
-
-  history.replaceState(
-    { ...currentState, forward: newUrl, position: historyPosition },
-    ''
-  );
-  historyPosition++;
-  history.pushState(
-    { back: currentUrl, current: newUrl, forward: null, position: historyPosition },
-    '',
-    newUrl
-  );
-  updateUI();
-}
-
-document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
-  btn.addEventListener('click', () => navigateTo(btn.dataset.path));
-});
-document.getElementById('back-btn').addEventListener('click', () => {
-  lastNavMethod = 'history.back';
   history.back();
-});
+}
 
-window.addEventListener('popstate', (e) => {
-  if (e.state?.position !== undefined) historyPosition = e.state.position;
-  updateUI();
-});
+// ══════════════════════════════════════════════════════════
+// Step 4: replaceState on Page A
+// ══════════════════════════════════════════════════════════
+function execStep4() {
+  const keyBefore = navigation.currentEntry.key;
 
-navigation.addEventListener('currententrychange', () => {
-  stepCount++;
-  const entry = navigation.currentEntry;
-  const name  = toPN(entry.url);
-  const key   = entry.key;
-  const method = lastNavMethod;
+  // ★ This is the call that should NOT change the key
+  history.replaceState({ updated: true }, '');
 
-  stepBadge.textContent = `Step ${stepCount} · ${method}`;
+  setTimeout(() => {
+    const keyAfter = navigation.currentEntry.key;
+    const url = navigation.currentEntry.url;
+    const match = keyAfter === keyA_initial;
 
-  log(`<span class="log-sep">───── Step ${stepCount} ─────</span>`);
-  log(`  <span class="log-method">${method}</span> → <span class="log-nav">${name}</span>  key=<span class="log-key">${shortKey(key)}</span>`);
+    showResult('r4', match ? 'ok' : 'bad',
+      `url: ${url}\nkey before: ${shortKey(keyBefore)}\nkey after:  ${shortKey(keyAfter)}\n${match
+        ? '✓ Key unchanged — correct behavior.'
+        : '✗ Key CHANGED — this is the bug.\n  replaceState() must not change the key.'}`);
+    markStep('s4', match ? 'done' : 'fail');
 
-  const entries = navigation.entries();
-  log(`<span class="log-entries">${entries.map((e, i) => `  [${i}] ${toPN(e.url).padEnd(7)} key=${shortKey(e.key)}${e.key === key ? ' ◀' : ''}`).join('\n')}</span>`);
-
-  if (name === 'Page A') {
-    const action = method.includes('back') ? '← Back' : 'Navigate';
-    if (firstPageAKey === null) {
-      firstPageAKey = key;
-      pageAVisits.push({ step: stepCount, key });
-      addRow(stepCount, action, key, true);
-      log(`<span class="log-ok">  ✓ First visit – key: ${shortKey(key)}</span>`);
-    } else if (key === firstPageAKey) {
-      pageAVisits.push({ step: stepCount, key });
-      addRow(stepCount, action, key, true);
-      log(`<span class="log-ok">  ✓ Key matches – PASS</span>`);
+    const verdict = document.getElementById('verdict');
+    if (match) {
+      verdict.textContent = '✅ PASS — replaceState did not change the key.';
+      verdict.className = 'pass';
     } else {
-      bugDetected = true;
-      pageAVisits.push({ step: stepCount, key });
-      addRow(stepCount, action, key, false);
-      log(`<span class="log-fail">  ✗ BUG: key changed! ${shortKey(firstPageAKey)} → ${shortKey(key)}</span>`);
-      banner.textContent = `❌ BUG (step ${stepCount}): key ${shortKey(firstPageAKey)} → ${shortKey(key)}`;
-      banner.className = 'fail';
+      verdict.textContent = `❌ FAIL — replaceState changed key from ${shortKey(keyA_initial)} to ${shortKey(keyAfter)}.\nThis is a WebKit bug. The key must remain stable for the same history slot.`;
+      verdict.className = 'fail';
+      verdict.style.whiteSpace = 'pre-line';
     }
-  }
-  if (stepCount >= 5 && !bugDetected && pageAVisits.length >= 2) {
-    banner.textContent = '✅ PASS'; banner.className = 'pass';
-  }
-  log('');
-});
-
-function addRow(step, action, key, isMatch) {
-  trackerWrap.style.display = '';
-  const isFirst = pageAVisits.length === 0;
-  const cell = isFirst ? '<span style="color:#888;">—</span>'
-    : isMatch ? '<span class="match">✓ Same</span>'
-    : '<span class="mismatch">✗ DIFFERENT</span>';
-  trackerBody.innerHTML += `<tr><td>${step}</td><td>${action}</td><td>${shortKey(key)}</td><td>${cell}</td></tr>`;
-}
-
-function resetManual() {
-  logEl.innerHTML = '';
-  firstPageAKey = null; pageAVisits = []; stepCount = 0; bugDetected = false;
-  trackerBody.innerHTML = ''; trackerWrap.style.display = 'none';
-  banner.className = ''; banner.style.display = 'none'; banner.textContent = '';
-  log('<span class="log-dim">Reset.</span>\n');
+  }, 50);
 }
 
 // ══════════════════════════════════════════════════════════
-// Init
+// Environment info
 // ══════════════════════════════════════════════════════════
-document.getElementById('env-info').textContent = `UA: ${navigator.userAgent} | basePath: "${basePath || '(root)'}"`;
-log(`<span class="log-dim">Repro: replaceState + pushState (Vue Router pattern)</span>\n`);
-
-history.replaceState({ back: null, current: location.pathname, forward: null, position: 0 }, '');
-if (!location.pathname.endsWith('/page-a')) navigateTo('/page-a');
-else updateUI();
+document.getElementById('env-info').textContent =
+  `${navigator.userAgent}\nbasePath: "${basePath || '(root)'}" | Navigation API: ${'navigation' in window}`;
 </script>
 </body>
 </html>

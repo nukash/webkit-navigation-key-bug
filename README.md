@@ -4,7 +4,7 @@ Minimal reproduction for a WebKit/Safari bug where `NavigationHistoryEntry.key` 
 
 ## Live demo
 
-👉 **https://YOUR_USERNAME.github.io/webkit-navigation-key-bug/**
+👉 **https://nukash.github.io/webkit-navigation-key-bug/**
 
 Open on **iOS Safari 26.x** to reproduce.
 
