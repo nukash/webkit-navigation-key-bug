@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebKit Navigation API – key stability bug repro (Step 2: replaceState + pushState)</title>
+<title>WebKit Navigation API – replaceState key corruption (minimal repro)</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -15,25 +15,46 @@
   .mode-badge {
     display: inline-block; font-size: 0.72rem; font-weight: 600;
     padding: 3px 8px; border-radius: 4px; margin-bottom: 10px;
-    background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;
+    background: #fce4ec; color: #b71c1c; border: 1px solid #ef9a9a;
   }
-  .mode-badge code { font-size: 0.72rem; background: #fce4c0; padding: 1px 4px; border-radius: 2px; }
-  .steps {
+  .mode-badge code { font-size: 0.72rem; background: #ffcdd2; padding: 1px 4px; border-radius: 2px; }
+
+  /* Two-column layout for tests */
+  .test-columns { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .test-card {
+    flex: 1; min-width: 280px; padding: 12px; border-radius: 8px;
+    border: 1px solid #ddd; background: #fafafa;
+  }
+  .test-card h2 { font-size: 0.88rem; margin-bottom: 8px; }
+  .test-card .desc { font-size: 0.78rem; color: #555; margin-bottom: 10px; line-height: 1.5; }
+  .test-card button {
+    width: 100%; padding: 10px; border: none; border-radius: 6px;
+    font-size: 0.88rem; font-weight: 600; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .test-card button.run { background: #0066cc; color: #fff; }
+  .test-card button.run:active { background: #004499; }
+  .test-card .result {
+    margin-top: 8px; padding: 8px; border-radius: 4px;
+    font-size: 0.8rem; font-family: "SF Mono", Menlo, Consolas, monospace;
+    line-height: 1.5; display: none;
+  }
+  .test-card .result.pass { display: block; background: #e6f9e6; color: #1a7a1a; }
+  .test-card .result.fail { display: block; background: #fde8e8; color: #c0392b; }
+
+  /* Separator */
+  .separator {
+    margin: 18px 0; padding: 10px 0; border-top: 1px solid #eee;
+    font-size: 0.82rem; font-weight: 600; color: #555;
+  }
+
+  /* Manual mode */
+  .manual-steps {
     font-size: 0.82rem; color: #444; line-height: 1.6;
     margin-bottom: 14px; padding: 10px 14px;
     background: #fffbe6; border-radius: 8px; border: 1px solid #f0e6b0;
   }
-  .steps ol { padding-left: 1.4em; }
-  .steps b { color: #222; }
-  .current-page {
-    font-size: 1.3rem; font-weight: 700; margin: 10px 0;
-    padding: 12px 16px; background: #f0f4ff; border-radius: 8px;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .current-page .step-badge {
-    font-size: 0.75rem; font-weight: 500; color: #555;
-    background: #e0e6f0; padding: 3px 8px; border-radius: 4px;
-  }
+  .manual-steps ol { padding-left: 1.4em; }
   nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   nav button {
     padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px;
@@ -43,25 +64,32 @@
   nav button:active { background: #e8e8e8; }
   nav button.active { background: #0066cc; color: #fff; border-color: #0066cc; }
   nav button.back-btn { margin-left: auto; }
+  .current-page {
+    font-size: 1.1rem; font-weight: 700; margin: 8px 0;
+    padding: 10px 14px; background: #f0f4ff; border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .current-page .step-badge {
+    font-size: 0.72rem; font-weight: 500; color: #555;
+    background: #e0e6f0; padding: 3px 8px; border-radius: 4px;
+  }
   #result-banner {
     padding: 10px 14px; border-radius: 6px; font-weight: 600;
-    font-size: 0.88rem; margin: 10px 0; display: none;
+    font-size: 0.88rem; margin: 8px 0; display: none;
   }
   #result-banner.pass { display: block; background: #e6f9e6; color: #1a7a1a; border: 1px solid #b0e0b0; }
   #result-banner.fail { display: block; background: #fde8e8; color: #c0392b; border: 1px solid #f0b0b0; }
-  .key-tracker { margin: 10px 0; }
+  .key-tracker { margin: 8px 0; }
   .key-tracker table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
   .key-tracker th {
     text-align: left; font-size: 0.72rem; text-transform: uppercase;
-    letter-spacing: 0.05em; color: #888; padding: 4px 8px;
-    border-bottom: 1px solid #ddd;
+    letter-spacing: 0.05em; color: #888; padding: 4px 8px; border-bottom: 1px solid #ddd;
   }
   .key-tracker td {
     padding: 5px 8px; border-bottom: 1px solid #eee;
     font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem;
   }
-  .key-tracker .match { color: #1a7a1a; }
-  .key-tracker .mismatch { color: #c0392b; font-weight: bold; }
+  .match { color: #1a7a1a; } .mismatch { color: #c0392b; font-weight: bold; }
   .log-header { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
   .section-title { font-weight: 600; font-size: 0.82rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
   .clear-btn { padding: 4px 10px; font-size: 0.72rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
@@ -69,7 +97,7 @@
     font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.75rem;
     line-height: 1.65; background: #1e1e1e; color: #d4d4d4;
     padding: 12px; border-radius: 8px; margin-top: 6px;
-    max-height: 380px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+    max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
   }
   .log-nav { color: #569cd6; } .log-key { color: #ce9178; }
   .log-ok { color: #6a9955; } .log-fail { color: #f44747; font-weight: bold; }
@@ -83,22 +111,53 @@
 </head>
 <body>
 
-<h1>Navigation API – <code>key</code> stability bug repro</h1>
-<p class="subtitle">WebKit Bugzilla – minimal SPA repro</p>
+<h1>Navigation API – <code>replaceState</code> corrupts <code>key</code></h1>
+<p class="subtitle">WebKit Bugzilla – minimal reproduction</p>
 
 <div class="mode-badge">
-  Step 2: <code>replaceState()</code> then <code>pushState()</code> per navigation
-  (Vue Router pattern), <code>currententrychange</code> for observation
+  Root cause: <code>history.replaceState()</code> on a traversed-back entry
+  causes <code>NavigationHistoryEntry.key</code> to change
 </div>
 
-<div class="steps">
-  <strong>Steps to reproduce:</strong>
+<!-- ════════════════════════════════════════════════════ -->
+<!-- Automated tests                                     -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="test-columns">
+
+  <div class="test-card">
+    <h2>Test A: replaceState alone</h2>
+    <div class="desc">
+      pushState(A) → pushState(B) → back → <b>replaceState on A</b><br>
+      Does the key change from just replaceState?
+    </div>
+    <button class="run" onclick="runTestA()">Run Test A</button>
+    <div class="result" id="result-a"></div>
+  </div>
+
+  <div class="test-card">
+    <h2>Test B: replaceState + pushState</h2>
+    <div class="desc">
+      pushState(A) → pushState(B) → back → <b>replaceState then pushState(C)</b> → back<br>
+      Vue Router pattern. Does A's key survive?
+    </div>
+    <button class="run" onclick="runTestB()">Run Test B</button>
+    <div class="result" id="result-b"></div>
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════ -->
+<!-- Manual mode (same as Step 2)                        -->
+<!-- ════════════════════════════════════════════════════ -->
+<div class="separator">Manual test (same as Step 2)</div>
+
+<div class="manual-steps">
   <ol>
-    <li>Click <b>Page A</b> (auto-navigated on load)</li>
+    <li>Click <b>Page A</b></li>
     <li>Click <b>Page B</b></li>
-    <li>Press <b>← Back</b> → returns to Page A → key should match step 1</li>
-    <li>Click <b>Page C</b></li>
-    <li>Press <b>← Back</b> → returns to Page A → <b>key must still match step 1</b></li>
+    <li><b>← Back</b> (Page A)</li>
+    <li>Click <b>Page C</b> → check if Page A key changed</li>
+    <li><b>← Back</b> (Page A) → confirm key mismatch</li>
   </ol>
 </div>
 
@@ -114,9 +173,7 @@
   <span id="current-page">—</span>
   <span class="step-badge" id="step-badge"></span>
 </div>
-
 <div id="result-banner"></div>
-
 <div class="key-tracker" id="key-tracker" style="display:none;">
   <table>
     <thead><tr><th>Step</th><th>Action</th><th>Page A key</th><th>Match?</th></tr></thead>
@@ -126,19 +183,18 @@
 
 <div class="log-header">
   <span class="section-title">Event log</span>
-  <button class="clear-btn" onclick="resetAll()">Reset</button>
+  <button class="clear-btn" onclick="resetManual()">Reset</button>
 </div>
 <div id="log"></div>
 <div class="env-info" id="env-info"></div>
 
 <script>
 // ══════════════════════════════════════════════════════════
-// Base path detection for GitHub Pages
+// Base path
 // ══════════════════════════════════════════════════════════
 const basePath = (() => {
   const p = location.pathname;
-  const knownPages = ['/page-a', '/page-b', '/page-c', '/page-d'];
-  for (const pg of knownPages) {
+  for (const pg of ['/page-a', '/page-b', '/page-c', '/page-d']) {
     const idx = p.indexOf(pg);
     if (idx !== -1) return p.slice(0, idx);
   }
@@ -146,33 +202,100 @@ const basePath = (() => {
 })();
 
 // ══════════════════════════════════════════════════════════
-// State
+// Automated Test A: replaceState alone
 // ══════════════════════════════════════════════════════════
-let firstPageAKey = null;
-let pageAVisits = [];
-let stepCount = 0;
-let bugDetected = false;
-let lastNavMethod = '(init)';
-let historyPosition = 0; // Vue Router tracks this
+async function runTestA() {
+  const el = document.getElementById('result-a');
+  el.className = 'result'; el.style.display = 'none';
 
-const logEl       = document.getElementById('log');
-const pageEl      = document.getElementById('current-page');
-const stepBadge   = document.getElementById('step-badge');
-const banner      = document.getElementById('result-banner');
-const backBtn     = document.getElementById('back-btn');
-const trackerWrap = document.getElementById('key-tracker');
-const trackerBody = document.getElementById('key-tracker-body');
-const envInfo     = document.getElementById('env-info');
+  // Setup: pushState A, pushState B
+  history.replaceState({ pos: 0 }, '', basePath + '/page-a');
+  await tick();
+  const keyA_before = navigation.currentEntry.key;
 
-// ══════════════════════════════════════════════════════════
-// Helpers
-// ══════════════════════════════════════════════════════════
-function log(html) {
-  logEl.innerHTML += html + '\n';
-  logEl.scrollTop = logEl.scrollHeight;
+  history.pushState({ pos: 1 }, '', basePath + '/page-b');
+  await tick();
+
+  // Back to A
+  history.back();
+  await waitForPopstate();
+
+  const keyA_after_back = navigation.currentEntry.key;
+
+  // ★ replaceState on A (the suspected cause)
+  history.replaceState({ pos: 0, extra: 'updated' }, '');
+  await tick();
+
+  const keyA_after_replace = navigation.currentEntry.key;
+
+  // Report
+  const lines = [];
+  lines.push(`Key A (initial):        ${shortK(keyA_before)}`);
+  lines.push(`Key A (after back):     ${shortK(keyA_after_back)}  ${keyA_after_back === keyA_before ? '✓' : '✗ CHANGED'}`);
+  lines.push(`Key A (after replace):  ${shortK(keyA_after_replace)}  ${keyA_after_replace === keyA_before ? '✓' : '✗ CHANGED'}`);
+
+  const passed = keyA_after_replace === keyA_before;
+  el.textContent = lines.join('\n');
+  el.className = 'result ' + (passed ? 'pass' : 'fail');
 }
 
-function toPageName(url) {
+// ══════════════════════════════════════════════════════════
+// Automated Test B: replaceState + pushState (Vue Router)
+// ══════════════════════════════════════════════════════════
+async function runTestB() {
+  const el = document.getElementById('result-b');
+  el.className = 'result'; el.style.display = 'none';
+
+  // Setup: push A
+  history.replaceState({ pos: 0 }, '', basePath + '/page-a');
+  await tick();
+  const keyA_initial = navigation.currentEntry.key;
+
+  // Push B (with Vue Router pattern: replaceState + pushState)
+  history.replaceState({ ...history.state, forward: basePath + '/page-b' }, '');
+  history.pushState({ pos: 1, back: basePath + '/page-a' }, '', basePath + '/page-b');
+  await tick();
+
+  // Back to A
+  history.back();
+  await waitForPopstate();
+  const keyA_after_back1 = navigation.currentEntry.key;
+
+  // ★ Push C with Vue Router pattern (replaceState on A, then pushState C)
+  history.replaceState({ ...history.state, forward: basePath + '/page-c' }, '');
+  history.pushState({ pos: 2, back: basePath + '/page-a' }, '', basePath + '/page-c');
+  await tick();
+
+  // Back to A again
+  history.back();
+  await waitForPopstate();
+  const keyA_after_back2 = navigation.currentEntry.key;
+
+  // Also check: what does entries() show for A's slot now?
+  const entries = navigation.entries();
+  const aEntries = entries.filter(e => toPN(e.url) === 'Page A');
+
+  // Report
+  const lines = [];
+  lines.push(`Key A (initial):       ${shortK(keyA_initial)}`);
+  lines.push(`Key A (back from B):   ${shortK(keyA_after_back1)}  ${keyA_after_back1 === keyA_initial ? '✓' : '✗'}`);
+  lines.push(`Key A (back from C):   ${shortK(keyA_after_back2)}  ${keyA_after_back2 === keyA_initial ? '✓' : '✗ CHANGED'}`);
+  lines.push(`entries with Page A: ${aEntries.length}`);
+
+  const passed = keyA_after_back2 === keyA_initial;
+  el.textContent = lines.join('\n');
+  el.className = 'result ' + (passed ? 'pass' : 'fail');
+}
+
+// ── Test helpers ──
+function tick() { return new Promise(r => setTimeout(r, 60)); }
+function waitForPopstate() {
+  return new Promise(r => {
+    window.addEventListener('popstate', () => setTimeout(r, 60), { once: true });
+  });
+}
+function shortK(k) { return k ? k.slice(0, 12) : '(none)'; }
+function toPN(url) {
   try {
     const p = new URL(url, location.origin).pathname;
     if (p.endsWith('/page-a')) return 'Page A';
@@ -180,219 +303,136 @@ function toPageName(url) {
     if (p.endsWith('/page-c')) return 'Page C';
     if (p.endsWith('/page-d')) return 'Page D';
     return p;
-  } catch { return String(url); }
+  } catch { return url; }
 }
 
-function shortKey(key) {
-  return key ? key.slice(0, 8) : '(none)';
-}
+// ══════════════════════════════════════════════════════════
+// Manual mode (same logic as Step 2)
+// ══════════════════════════════════════════════════════════
+let firstPageAKey = null;
+let pageAVisits = [];
+let stepCount = 0;
+let bugDetected = false;
+let lastNavMethod = '(init)';
+let historyPosition = 0;
+
+const logEl       = document.getElementById('log');
+const pageEl      = document.getElementById('current-page');
+const stepBadge   = document.getElementById('step-badge');
+const banner      = document.getElementById('result-banner');
+const trackerWrap = document.getElementById('key-tracker');
+const trackerBody = document.getElementById('key-tracker-body');
+
+function log(html) { logEl.innerHTML += html + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+function shortKey(k) { return k ? k.slice(0, 8) : '(none)'; }
+function toPageName(url) { return toPN(url); }
 
 function updateUI() {
-  pageEl.textContent = toPageName(location.pathname);
-  const path = location.pathname;
+  pageEl.textContent = toPN(location.pathname);
   document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
-    btn.classList.toggle('active', path.endsWith(btn.dataset.path));
+    btn.classList.toggle('active', location.pathname.endsWith(btn.dataset.path));
   });
 }
 
-// ══════════════════════════════════════════════════════════
-// Navigation — Vue Router pattern
-//
-// Vue Router does this on every router.push():
-//   1. replaceState on CURRENT entry (update state with forward ref)
-//   2. pushState for the NEW entry (with back/current/forward/position)
-//
-// On popstate (back/forward):
-//   - reads history.state.position to determine direction
-//   - calls replaceState to update current entry's state
-//
-// Source: vue-router/src/history/html5.ts
-// ══════════════════════════════════════════════════════════
 function navigateTo(pagePath) {
   lastNavMethod = 'replaceState+pushState';
   const currentUrl = location.pathname;
   const newUrl = basePath + pagePath;
-
-  // ★ Step A: replaceState on the CURRENT entry
-  //    Vue Router updates the current entry's state to record
-  //    which page is "forward" from here
   const currentState = history.state || {};
+
   history.replaceState(
-    {
-      ...currentState,
-      back: currentState.back || null,
-      current: currentUrl,
-      forward: newUrl,
-      position: historyPosition,
-      replaced: false,
-    },
+    { ...currentState, forward: newUrl, position: historyPosition },
     ''
   );
-
-  log(`<span class="log-dim">  → replaceState on "${toPageName(currentUrl)}" (forward: ${toPageName(newUrl)})</span>`);
-
-  // ★ Step B: pushState for the NEW entry
   historyPosition++;
   history.pushState(
-    {
-      back: currentUrl,
-      current: newUrl,
-      forward: null,
-      position: historyPosition,
-      replaced: false,
-    },
+    { back: currentUrl, current: newUrl, forward: null, position: historyPosition },
     '',
     newUrl
   );
-
-  log(`<span class="log-dim">  → pushState to "${toPageName(newUrl)}" (position: ${historyPosition})</span>`);
-
   updateUI();
-  // currententrychange fires after this
 }
 
-function goBack() {
-  lastNavMethod = 'history.back';
-  history.back();
-}
-
-// popstate fires on back/forward
-window.addEventListener('popstate', (event) => {
-  // Vue Router reads position from state to know direction
-  const state = event.state || {};
-  if (state.position !== undefined) {
-    historyPosition = state.position;
-  }
-
-  updateUI();
-
-  log(`<span class="log-dim">  → popstate: position=${state.position ?? '?'} current=${state.current ?? '?'}</span>`);
-});
-
-// Wire buttons
 document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.path));
 });
-backBtn.addEventListener('click', () => goBack());
+document.getElementById('back-btn').addEventListener('click', () => {
+  lastNavMethod = 'history.back';
+  history.back();
+});
 
-// ══════════════════════════════════════════════════════════
-// Observation — currententrychange (single source of truth)
-// ══════════════════════════════════════════════════════════
+window.addEventListener('popstate', (e) => {
+  if (e.state?.position !== undefined) historyPosition = e.state.position;
+  updateUI();
+});
+
 navigation.addEventListener('currententrychange', () => {
   stepCount++;
-
   const entry = navigation.currentEntry;
-  const name  = toPageName(entry.url);
+  const name  = toPN(entry.url);
   const key   = entry.key;
-  const id    = entry.id;
   const method = lastNavMethod;
 
   stepBadge.textContent = `Step ${stepCount} · ${method}`;
 
-  // ── Log ──
   log(`<span class="log-sep">───── Step ${stepCount} ─────</span>`);
-  log(`  <span class="log-method">${method}</span> → <span class="log-nav">${name}</span>`);
-  log(`  key=<span class="log-key">${shortKey(key)}</span>  id=${shortKey(id)}`);
-  log(`  history.state: ${JSON.stringify(history.state)}`);
+  log(`  <span class="log-method">${method}</span> → <span class="log-nav">${name}</span>  key=<span class="log-key">${shortKey(key)}</span>`);
 
   const entries = navigation.entries();
-  const lines = entries.map((e, i) => {
-    const cur = e.key === key ? ' ◀' : '';
-    return `  [${i}] ${toPageName(e.url).padEnd(7)} key=${shortKey(e.key)}${cur}`;
-  }).join('\n');
-  log(`<span class="log-entries">${lines}</span>`);
+  log(`<span class="log-entries">${entries.map((e, i) => `  [${i}] ${toPN(e.url).padEnd(7)} key=${shortKey(e.key)}${e.key === key ? ' ◀' : ''}`).join('\n')}</span>`);
 
-  // ── Key stability check for Page A ──
   if (name === 'Page A') {
     const action = method.includes('back') ? '← Back' : 'Navigate';
-
     if (firstPageAKey === null) {
       firstPageAKey = key;
       pageAVisits.push({ step: stepCount, key });
-      addTrackerRow(stepCount, action, key, true);
-      log(`<span class="log-ok">  ✓ Page A first visit – key: ${shortKey(key)}</span>`);
+      addRow(stepCount, action, key, true);
+      log(`<span class="log-ok">  ✓ First visit – key: ${shortKey(key)}</span>`);
     } else if (key === firstPageAKey) {
       pageAVisits.push({ step: stepCount, key });
-      addTrackerRow(stepCount, action, key, true);
-      log(`<span class="log-ok">  ✓ Page A key matches – PASS</span>`);
+      addRow(stepCount, action, key, true);
+      log(`<span class="log-ok">  ✓ Key matches – PASS</span>`);
     } else {
       bugDetected = true;
       pageAVisits.push({ step: stepCount, key });
-      addTrackerRow(stepCount, action, key, false);
-      log(`<span class="log-fail">  ✗ BUG: Page A has a NEW key!</span>`);
-      log(`<span class="log-fail">    Expected: ${shortKey(firstPageAKey)} (step ${pageAVisits[0].step})</span>`);
-      log(`<span class="log-fail">    Got:      ${shortKey(key)}</span>`);
+      addRow(stepCount, action, key, false);
+      log(`<span class="log-fail">  ✗ BUG: key changed! ${shortKey(firstPageAKey)} → ${shortKey(key)}</span>`);
       banner.textContent = `❌ BUG (step ${stepCount}): key ${shortKey(firstPageAKey)} → ${shortKey(key)}`;
       banner.className = 'fail';
     }
   }
-
   if (stepCount >= 5 && !bugDetected && pageAVisits.length >= 2) {
-    banner.textContent = '✅ PASS – key remained stable across traversals';
-    banner.className = 'pass';
+    banner.textContent = '✅ PASS'; banner.className = 'pass';
   }
-
   log('');
 });
 
-function addTrackerRow(step, action, key, isMatch) {
+function addRow(step, action, key, isMatch) {
   trackerWrap.style.display = '';
   const isFirst = pageAVisits.length === 0;
-  let matchCell;
-  if (isFirst) {
-    matchCell = '<span style="color:#888;">— (first)</span>';
-  } else {
-    matchCell = isMatch
-      ? '<span class="match">✓ Same</span>'
-      : '<span class="mismatch">✗ DIFFERENT</span>';
-  }
-  trackerBody.innerHTML += `<tr>
-    <td>${step}</td><td>${action}</td>
-    <td style="letter-spacing:0.5px;">${shortKey(key)}</td>
-    <td>${matchCell}</td>
-  </tr>`;
+  const cell = isFirst ? '<span style="color:#888;">—</span>'
+    : isMatch ? '<span class="match">✓ Same</span>'
+    : '<span class="mismatch">✗ DIFFERENT</span>';
+  trackerBody.innerHTML += `<tr><td>${step}</td><td>${action}</td><td>${shortKey(key)}</td><td>${cell}</td></tr>`;
 }
 
-// ══════════════════════════════════════════════════════════
-// Reset
-// ══════════════════════════════════════════════════════════
-function resetAll() {
+function resetManual() {
   logEl.innerHTML = '';
-  firstPageAKey = null;
-  pageAVisits = [];
-  stepCount = 0;
-  bugDetected = false;
-  trackerBody.innerHTML = '';
-  trackerWrap.style.display = 'none';
+  firstPageAKey = null; pageAVisits = []; stepCount = 0; bugDetected = false;
+  trackerBody.innerHTML = ''; trackerWrap.style.display = 'none';
   banner.className = ''; banner.style.display = 'none'; banner.textContent = '';
-  log('<span class="log-dim">Reset. Follow the steps above.</span>\n');
+  log('<span class="log-dim">Reset.</span>\n');
 }
 
 // ══════════════════════════════════════════════════════════
 // Init
 // ══════════════════════════════════════════════════════════
-envInfo.textContent = [
-  `UA: ${navigator.userAgent}`,
-  `basePath: "${basePath || '(root)'}"`,
-  `navigation API: ${'navigation' in window ? 'YES' : 'NO'}`
-].join(' | ');
+document.getElementById('env-info').textContent = `UA: ${navigator.userAgent} | basePath: "${basePath || '(root)'}"`;
+log(`<span class="log-dim">Repro: replaceState + pushState (Vue Router pattern)</span>\n`);
 
-log(`<span class="log-dim">Mode: replaceState + pushState (Vue Router pattern)</span>`);
-log(`<span class="log-dim">      replaceState updates current entry state before each push</span>`);
-log(`<span class="log-dim">basePath: "${basePath || '(root)'}"</span>`);
-log('');
-
-// Set initial state (Vue Router does this on boot)
-history.replaceState(
-  { back: null, current: location.pathname, forward: null, position: historyPosition, replaced: true },
-  ''
-);
-
-if (!location.pathname.endsWith('/page-a')) {
-  navigateTo('/page-a');
-} else {
-  updateUI();
-}
+history.replaceState({ back: null, current: location.pathname, forward: null, position: 0 }, '');
+if (!location.pathname.endsWith('/page-a')) navigateTo('/page-a');
+else updateUI();
 </script>
 </body>
 </html>
