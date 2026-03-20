@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebKit Navigation API – key stability bug repro (pushState)</title>
+<title>WebKit Navigation API – key stability bug repro (Step 2: replaceState + pushState)</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -12,7 +12,6 @@
   }
   h1 { font-size: 1.15rem; margin-bottom: 2px; }
   .subtitle { font-size: 0.8rem; color: #666; margin-bottom: 14px; }
-  .subtitle a { color: #0066cc; }
   .mode-badge {
     display: inline-block; font-size: 0.72rem; font-weight: 600;
     padding: 3px 8px; border-radius: 4px; margin-bottom: 10px;
@@ -88,8 +87,8 @@
 <p class="subtitle">WebKit Bugzilla – minimal SPA repro</p>
 
 <div class="mode-badge">
-  Step 1: <code>history.pushState()</code> + <code>history.back()</code> for navigation,
-  <code>currententrychange</code> for observation
+  Step 2: <code>replaceState()</code> then <code>pushState()</code> per navigation
+  (Vue Router pattern), <code>currententrychange</code> for observation
 </div>
 
 <div class="steps">
@@ -153,10 +152,8 @@ let firstPageAKey = null;
 let pageAVisits = [];
 let stepCount = 0;
 let bugDetected = false;
-
-// What method was used for the current navigation
-// (set before pushState/back, read in currententrychange)
 let lastNavMethod = '(init)';
+let historyPosition = 0; // Vue Router tracks this
 
 const logEl       = document.getElementById('log');
 const pageEl      = document.getElementById('current-page');
@@ -199,30 +196,77 @@ function updateUI() {
 }
 
 // ══════════════════════════════════════════════════════════
-// Navigation — uses History API (like Vue Router / Nuxt3)
+// Navigation — Vue Router pattern
 //
-// ★ This is the KEY DIFFERENCE from the vanilla version:
-//   - Forward: history.pushState()  (not navigation.navigate)
-//   - Back:    history.back()       (not navigation.back)
-//   - NO event.intercept()
+// Vue Router does this on every router.push():
+//   1. replaceState on CURRENT entry (update state with forward ref)
+//   2. pushState for the NEW entry (with back/current/forward/position)
+//
+// On popstate (back/forward):
+//   - reads history.state.position to determine direction
+//   - calls replaceState to update current entry's state
+//
+// Source: vue-router/src/history/html5.ts
 // ══════════════════════════════════════════════════════════
 function navigateTo(pagePath) {
-  lastNavMethod = 'history.pushState';
-  const url = basePath + pagePath;
-  history.pushState({ page: pagePath }, '', url);
+  lastNavMethod = 'replaceState+pushState';
+  const currentUrl = location.pathname;
+  const newUrl = basePath + pagePath;
+
+  // ★ Step A: replaceState on the CURRENT entry
+  //    Vue Router updates the current entry's state to record
+  //    which page is "forward" from here
+  const currentState = history.state || {};
+  history.replaceState(
+    {
+      ...currentState,
+      back: currentState.back || null,
+      current: currentUrl,
+      forward: newUrl,
+      position: historyPosition,
+      replaced: false,
+    },
+    ''
+  );
+
+  log(`<span class="log-dim">  → replaceState on "${toPageName(currentUrl)}" (forward: ${toPageName(newUrl)})</span>`);
+
+  // ★ Step B: pushState for the NEW entry
+  historyPosition++;
+  history.pushState(
+    {
+      back: currentUrl,
+      current: newUrl,
+      forward: null,
+      position: historyPosition,
+      replaced: false,
+    },
+    '',
+    newUrl
+  );
+
+  log(`<span class="log-dim">  → pushState to "${toPageName(newUrl)}" (position: ${historyPosition})</span>`);
+
   updateUI();
-  // currententrychange should fire after this
+  // currententrychange fires after this
 }
 
 function goBack() {
   lastNavMethod = 'history.back';
   history.back();
-  // popstate + currententrychange will fire
 }
 
-// Update UI on popstate (back/forward)
-window.addEventListener('popstate', () => {
+// popstate fires on back/forward
+window.addEventListener('popstate', (event) => {
+  // Vue Router reads position from state to know direction
+  const state = event.state || {};
+  if (state.position !== undefined) {
+    historyPosition = state.position;
+  }
+
   updateUI();
+
+  log(`<span class="log-dim">  → popstate: position=${state.position ?? '?'} current=${state.current ?? '?'}</span>`);
 });
 
 // Wire buttons
@@ -232,10 +276,7 @@ document.querySelectorAll('#nav-buttons button[data-path]').forEach(btn => {
 backBtn.addEventListener('click', () => goBack());
 
 // ══════════════════════════════════════════════════════════
-// Observation — uses Navigation API's currententrychange
-//
-// This is the SINGLE place where we read keys and check
-// for the bug. It fires for both pushState and popstate.
+// Observation — currententrychange (single source of truth)
 // ══════════════════════════════════════════════════════════
 navigation.addEventListener('currententrychange', () => {
   stepCount++;
@@ -252,6 +293,7 @@ navigation.addEventListener('currententrychange', () => {
   log(`<span class="log-sep">───── Step ${stepCount} ─────</span>`);
   log(`  <span class="log-method">${method}</span> → <span class="log-nav">${name}</span>`);
   log(`  key=<span class="log-key">${shortKey(key)}</span>  id=${shortKey(id)}`);
+  log(`  history.state: ${JSON.stringify(history.state)}`);
 
   const entries = navigation.entries();
   const lines = entries.map((e, i) => {
@@ -280,7 +322,7 @@ navigation.addEventListener('currententrychange', () => {
       log(`<span class="log-fail">  ✗ BUG: Page A has a NEW key!</span>`);
       log(`<span class="log-fail">    Expected: ${shortKey(firstPageAKey)} (step ${pageAVisits[0].step})</span>`);
       log(`<span class="log-fail">    Got:      ${shortKey(key)}</span>`);
-      banner.textContent = `❌ BUG (step ${stepCount}): key changed ${shortKey(firstPageAKey)} → ${shortKey(key)}`;
+      banner.textContent = `❌ BUG (step ${stepCount}): key ${shortKey(firstPageAKey)} → ${shortKey(key)}`;
       banner.className = 'fail';
     }
   }
@@ -335,10 +377,16 @@ envInfo.textContent = [
   `navigation API: ${'navigation' in window ? 'YES' : 'NO'}`
 ].join(' | ');
 
-log(`<span class="log-dim">Mode: history.pushState + history.back</span>`);
-log(`<span class="log-dim">      (NO navigation.navigate, NO event.intercept)</span>`);
+log(`<span class="log-dim">Mode: replaceState + pushState (Vue Router pattern)</span>`);
+log(`<span class="log-dim">      replaceState updates current entry state before each push</span>`);
 log(`<span class="log-dim">basePath: "${basePath || '(root)'}"</span>`);
 log('');
+
+// Set initial state (Vue Router does this on boot)
+history.replaceState(
+  { back: null, current: location.pathname, forward: null, position: historyPosition, replaced: true },
+  ''
+);
 
 if (!location.pathname.endsWith('/page-a')) {
   navigateTo('/page-a');
